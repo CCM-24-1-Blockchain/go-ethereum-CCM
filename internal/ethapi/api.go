@@ -23,7 +23,6 @@ import (
 	"math/big"
 	"strings"
 	"time"
-	"encoding/hex"
 
 	"github.com/confluentinc/confluent-kafka-go/kafka"
 	"github.com/davecgh/go-spew/spew"
