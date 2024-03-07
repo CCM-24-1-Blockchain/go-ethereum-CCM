@@ -23,9 +23,9 @@ import (
 	"math/big"
 	"strings"
 	"time"
-	"encoding/json"
-	"github.com/confluentinc/confluent-kafka-go/kafka"
+	"encoding/hex"
 
+	"github.com/confluentinc/confluent-kafka-go/kafka"
 	"github.com/davecgh/go-spew/spew"
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/accounts/abi"
@@ -52,62 +52,35 @@ import (
 
 // KafkaProducer는 Kafka로 메시지를 전송하는 함수입니다.
 func KafkaProducer(topic string, message []byte) error {
-    producer, err := kafka.NewProducer(&kafka.ConfigMap{"bootstrap.servers": "your_kafka_server"})
-    if err != nil {
-        log.Error("Failed to create Kafka producer", "err", err)
-        return err
-    }
+	producer, err := kafka.NewProducer(&kafka.ConfigMap{"bootstrap.servers": "3.38.154.85:39092"})
+	if err != nil {
+		log.Error("Failed to create Kafka producer", "err", err)
+		return err
+	}
 
-    defer producer.Close()
+	defer producer.Close()
 
-    // 메시지를 Kafka로 전송합니다.
-    deliveryChan := make(chan kafka.Event)
-    err = producer.Produce(&kafka.Message{
-        TopicPartition: kafka.TopicPartition{Topic: &topic, Partition: kafka.PartitionAny},
-        Value:          message,
-    }, deliveryChan)
-    if err != nil {
-        log.Error("Failed to produce message", "err", err)
-        return err
-    }
+	// 메시지를 Kafka로 전송합니다.
+	deliveryChan := make(chan kafka.Event)
+	err = producer.Produce(&kafka.Message{
+		TopicPartition: kafka.TopicPartition{Topic: &topic, Partition: kafka.PartitionAny},
+		Value:          message,
+	}, deliveryChan)
+	if err != nil {
+		log.Error("Failed to produce message", "err", err)
+		return err
+	}
 
-    e := <-deliveryChan
-    m := e.(*kafka.Message)
+	e := <-deliveryChan
+	m := e.(*kafka.Message)
 
-    if m.TopicPartition.Error != nil {
-        log.Error("Failed to deliver message", "err", m.TopicPartition.Error)
-        return m.TopicPartition.Error
-    }
+	if m.TopicPartition.Error != nil {
+		log.Error("Failed to deliver message", "err", m.TopicPartition.Error)
+		return m.TopicPartition.Error
+	}
 
-    log.Info("Message delivered to Kafka", "topic", topic)
-    return nil
-}
-
-// SendTransaction은 주어진 인자로 트랜잭션을 생성하고, Kafka로 전송합니다.
-func (s *TransactionAPI) SendTransaction(ctx context.Context, args TransactionArgs) (common.Hash, error) {
-    // 트랜잭션 생성 및 기본값 설정
-    if args.Gas == nil || args.GasPrice == nil || args.Nonce == nil {
-        return common.Hash{}, errors.New("gas, gasPrice, and nonce are required")
-    }
-    if err := args.setDefaults(ctx, s.b); err != nil {
-        return common.Hash{}, err
-    }
-    tx := args.toTransaction()
-
-    // 트랜잭션 정보를 JSON으로 인코딩하여 Kafka로 전송
-    txData, err := json.Marshal(tx)
-    if err != nil {
-        log.Error("Failed to marshal transaction", "err", err)
-        return common.Hash{}, err
-    }
-
-    if err := KafkaProducer("ethereum_transactions", txData); err != nil {
-        return common.Hash{}, err
-    }
-
-    // Kafka로 전송된 트랜잭션에 대한 가상의 해시 반환
-    fakeHash := "0x" + hexutil.Encode(tx.Hash().Bytes())
-    return common.HexToHash(fakeHash), nil
+	log.Info("Message delivered to Kafka", "topic", topic)
+	return nil
 }
 
 // EthereumAPI provides an API to access Ethereum related information.
@@ -512,6 +485,11 @@ func (s *PersonalAccountAPI) signTransaction(ctx context.Context, args *Transact
 	return wallet.SignTxWithPassphrase(account, passwd, tx, s.b.ChainConfig().ChainID)
 }
 
+// 내가 만든 함수~
+func helloWorld() {
+	log.Info("Hello, World!")
+}
+
 // SendTransaction will create a transaction from the given arguments and
 // tries to sign it with the key associated with args.From. If the given
 // passwd isn't able to decrypt the key it fails.
@@ -793,10 +771,10 @@ func (s *BlockChainAPI) GetHeaderByHash(ctx context.Context, hash common.Hash) m
 }
 
 // GetBlockByNumber returns the requested canonical block.
-// * When blockNr is -1 the chain head is returned.
-// * When blockNr is -2 the pending chain head is returned.
-// * When fullTx is true all transactions in the block are returned, otherwise
-//   only the transaction hash is returned.
+//   - When blockNr is -1 the chain head is returned.
+//   - When blockNr is -2 the pending chain head is returned.
+//   - When fullTx is true all transactions in the block are returned, otherwise
+//     only the transaction hash is returned.
 func (s *BlockChainAPI) GetBlockByNumber(ctx context.Context, number rpc.BlockNumber, fullTx bool) (map[string]interface{}, error) {
 	block, err := s.b.BlockByNumber(ctx, number)
 	if block != nil && err == nil {
@@ -1718,16 +1696,30 @@ func SubmitTransaction(ctx context.Context, b Backend, tx *types.Transaction) (c
 	if err := checkTxFee(tx.GasPrice(), tx.Gas(), b.RPCTxFeeCap()); err != nil {
 		return common.Hash{}, err
 	}
+
+	signer := types.MakeSigner(b.ChainConfig(), b.CurrentBlock().Number())
+    from, err := types.Sender(signer, tx)
+    if err != nil {
+        return common.Hash{}, err
+    }
+	
 	if !b.UnprotectedAllowed() && !tx.Protected() {
 		// Ensure only eip155 signed transactions are submitted if EIP155Required is set.
 		return common.Hash{}, errors.New("only replay-protected (EIP-155) transactions allowed over RPC")
 	}
-	if err := b.SendTx(ctx, tx); err != nil {
+
+	// RLP encode the transaction
+	txBytes, err := rlp.EncodeToBytes(tx)
+	if err != nil {
+		log.Info("Failed to RLP encode transaction:", err)
 		return common.Hash{}, err
 	}
+
+	if err := KafkaProducer("my-topic", txBytes); err != nil {
+		return common.Hash{}, err
+	}
+
 	// Print a log with full tx details for manual investigations and interventions
-	signer := types.MakeSigner(b.ChainConfig(), b.CurrentBlock().Number())
-	from, err := types.Sender(signer, tx)
 	if err != nil {
 		return common.Hash{}, err
 	}
@@ -1741,10 +1733,19 @@ func SubmitTransaction(ctx context.Context, b Backend, tx *types.Transaction) (c
 	return tx.Hash(), nil
 }
 
+func SubmitTxPool(ctx context.Context, b Backend, tx *types.Transaction) (common.Hash, error) {
+	log.Info("Before sending tx");
+	if err := b.SendTx(ctx, tx); err != nil {
+		return common.Hash{}, err
+	}
+	log.Info("Okay!!!!!!!");
+	return tx.Hash(), nil
+}
+
 // SendTransaction creates a transaction for the given argument, sign it and submit it to the
 // transaction pool.
-/*
 func (s *TransactionAPI) SendTransaction(ctx context.Context, args TransactionArgs) (common.Hash, error) {
+	//      helloWorld()
 	// Look up the wallet containing the requested signer
 	account := accounts.Account{Address: args.from()}
 
@@ -1773,7 +1774,6 @@ func (s *TransactionAPI) SendTransaction(ctx context.Context, args TransactionAr
 	}
 	return SubmitTransaction(ctx, s.b, signed)
 }
-*/
 
 // FillTransaction fills the defaults (nonce, gas, gasPrice or 1559 fields)
 // on a given unsigned transaction, and returns it to the caller for further
@@ -1799,7 +1799,7 @@ func (s *TransactionAPI) SendRawTransaction(ctx context.Context, input hexutil.B
 	if err := tx.UnmarshalBinary(input); err != nil {
 		return common.Hash{}, err
 	}
-	return SubmitTransaction(ctx, s.b, tx)
+	return SubmitTxPool(ctx, s.b, tx)
 }
 
 // Sign calculates an ECDSA signature for:
