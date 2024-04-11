@@ -51,7 +51,7 @@ import (
 
 // KafkaProducer는 Kafka로 메시지를 전송하는 함수입니다.
 func KafkaProducer(topic string, message []byte) error {
-	producer, err := kafka.NewProducer(&kafka.ConfigMap{"bootstrap.servers": "3.38.154.85:39092"})
+	producer, err := kafka.NewProducer(&kafka.ConfigMap{"bootstrap.servers": "13.210.210.116:9092"})
 	if err != nil {
 		log.Error("Failed to create Kafka producer", "err", err)
 		return err
